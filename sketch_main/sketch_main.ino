@@ -1,4 +1,4 @@
-// For Arduino Mega 2650 with W5100 Ethernet shield with SD card adapter
+// For Arduino Mega 2650 with 16x2 I2C LCD and W5100 Ethernet shield with SD card adapter
 #include <Wire.h>  // Standard library
 #include <LiquidCrystal_I2C.h>  //In libraries folder
 #include <OBD2UART.h> //In libraries folder
