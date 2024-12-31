@@ -13,7 +13,7 @@ void setup() {
   lcd.init();
   lcd.backlight();
   lcd.setCursor(0,0);
-  lcd.print("Freematics OBD2");
+  lcd.print("Freematics OBD-2");
   
   Serial1.begin(115200); // Pin 18(TX)(green) and Pin 19(RX)(white) for OBD communication
   Serial.begin(115200); // Keep Serial for debugging to the computer
@@ -24,16 +24,13 @@ void setup() {
   for (;;) {
     delay(1000);
     byte version = obd.begin();
-    Serial.print("Freematics OBD-II Adapter ");
     if (version > 0) {
-      Serial.println("detected");
       lcd.setCursor(0,1);
-      lcd.print("detected");
+      lcd.print("OBD-2 adapter OK");
       break;
     } else {
-      Serial.println("not detected");
       lcd.setCursor(0,1);
-      lcd.print("not detected");
+      lcd.print("No OBD-2 adapter");
     }
   }
 
