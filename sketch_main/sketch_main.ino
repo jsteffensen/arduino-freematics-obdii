@@ -88,6 +88,7 @@ void loop() {
   lcd.setCursor(0,1);
   lcd.print("                ");
   delay(100);
+  lcd.setCursor(0,1);
   lcd.print(String(acc[0]) + "/" + String(acc[1]) + "/" + String(acc[2]));
 
   // Print gyroscope data
