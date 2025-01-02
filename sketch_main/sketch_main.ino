@@ -1,123 +1,129 @@
-// For Arduino Mega 2650 with 16x2 I2C LCD and W5100 Ethernet shield with SD card adapter
-#include <Wire.h>  // Standard library
-#include <LiquidCrystal_I2C.h>  //In libraries folder
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <SPI.h>
+#include <SD.h>
+#include <OBD2UART.h>
 
-// connect SDA (green)-> pin 20 and SCL (yellow)-> pin 21.
-LiquidCrystal_I2C lcd(0x27, 16, 2); // Set the LCD's I2C
+// LCD and SD card settings
+LiquidCrystal_I2C lcd(0x27, 16, 2); // Set the LCD's I2C address
+const int chipSelectSD = 4;
+const int chipSelectEthernet = 10; // Not used in this example, but required for initialization
 
-#include <OBD2UART.h> //In libraries folder
-
+// OBD2 UART
 COBD obd;
 
+// Time tracking for loop actions
+unsigned long lastTime = 0;
+const long interval = 10; // Interval for loop actions (10000 ms or 10 seconds)
+
+// Define the size of each CAN frame (max 8 data bytes + overhead)
+#define CAN_FRAME_SIZE 16 // Adjusted for overhead
+#define BUFFER_SIZE 256 // Number of frames in the buffer
+
+// Create a buffer to hold the CAN frames
+byte canBuffer[BUFFER_SIZE][CAN_FRAME_SIZE];
+int bufferIndex = 0;
+
+// Global filename
+String globalFileName;
+
+String generateFileName() {
+    unsigned long currentTime = millis();
+    int randomNum = random(9999); // Add some randomness
+    String fileName = "data" + String(randomNum) + ".dat";
+    return fileName;
+}
+
 void setup() {
-  
-  lcd.init();
-  lcd.backlight();
-  lcd.setCursor(0,0);
-  lcd.print("Freematics OBD-2");
-  
-  Serial1.begin(115200); // Arduino pin 18->white wire and pin 19->green wire for OBD communication
-  while (!Serial1); // Wait for Serial port to connect
-  
-  Serial.begin(115200); // Keep Serial for debugging to the computer
+    // Use an unconnected analog pin to seed the random number generator
+    randomSeed(analogRead(0));
 
-  // Check for the presence of the OBD-II adapter and loop until detected
-  for (;;) {
-    
-    delay(2000);
-    byte version = obd.begin();
-
-    if (version > 0) {
-      lcd.setCursor(0,1);
-      lcd.print("OBD-2 adapter OK");
-
-      Serial.println("OBD-2 adapter OK");
-      break;
-    } else {
-
-      lcd.setCursor(0,1);
-      lcd.print("                ");
-      delay(150);
-      lcd.setCursor(0,1);
-      lcd.print("No OBD-2 adapter");
-
-      Serial.println("No OBD-2 adapter");
-      Serial.println(version);
+    // Initialize serial communications
+    Serial.begin(115200);
+    while (!Serial) {
+        ; // Wait for serial port to connect. Needed for native USB port only
     }
-  }
 
-  // Initialize MEMS with sensor fusion enabled
-  bool hasMEMS = obd.memsInit(true);
+    // Initialize LCD
+    lcd.init();
+    lcd.backlight();
+    lcd.setCursor(0,0);
+    lcd.print("Freematics OBD-2");
 
-  lcd.setCursor(0,1);
-  lcd.print("                ");
-  delay(150);
+    // Initialize SD card
+    pinMode(chipSelectSD, OUTPUT);
+    digitalWrite(chipSelectSD, HIGH);
 
-  if (hasMEMS) {
-    lcd.setCursor(0,1);
-    lcd.print("Motion rdy");
-    Serial.println("Motion rdy");
-  }
-  
-  // If no MEMS sensor, hang the setup
-  if (!hasMEMS) {
-    lcd.setCursor(0,1);
-    lcd.print("Motion rdy");
-    Serial.println("No motion");
+    if (!SD.begin(chipSelectSD)) {
+        lcd.setCursor(0, 1);
+        lcd.print("SD Fail");
+        Serial.println("SD initialization failed!");
+        while (1); // Stop everything if SD fails
+    }
+    lcd.setCursor(0, 1);
+    lcd.print("SD OK    ");
 
-    for (;;) delay(1000);
-  }
+    // Generate a global filename for use in all file operations
+    globalFileName = generateFileName();
+    // Create an empty file to be appended to by writeToSDCard()
+    File dataFile = SD.open(globalFileName.c_str(), FILE_WRITE);
+    if (dataFile) {
+        dataFile.close();  // Close the file immediately after creating it
+        Serial.println(globalFileName + " created successfully.");
+    } else {
+        Serial.println("Error creating " + globalFileName);
+        while (1); // Stop everything if no file
+    }
+
+    // Initialize OBD
+    Serial1.begin(115200); // OBD-II on Serial1
+    if (!obd.begin()) {
+        lcd.setCursor(0, 1);
+        lcd.print("OBD Fail ");
+        Serial.println("OBD initialization failed!");
+    } else {
+        lcd.setCursor(0, 1);
+        lcd.print("OBD OK   ");
+    }
+}
+
+bool receiveCANFrame(byte *frame) {
+    byte dummyData[11] = {0x01, 0x23, 0x08, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11}; // Example frame data
+    memcpy(frame, dummyData, sizeof(dummyData));
+    return true; // Indicate a frame has been 'received'
+}
+
+void writeToSDCard(byte buffer[][CAN_FRAME_SIZE], int numFrames) {
+    File dataFile = SD.open(globalFileName.c_str(), FILE_WRITE);
+    if (dataFile) {
+        for (int i = 0; i < numFrames; i++) {
+            dataFile.write(buffer[i], CAN_FRAME_SIZE);
+        }
+        dataFile.close();
+        Serial.println("Data written to " + globalFileName);
+    } else {
+        Serial.println("Error opening " + globalFileName);
+    }
 }
 
 void loop() {
-  int16_t acc[3] = {0};
-  int16_t gyro[3] = {0};
-  int16_t mag[3] = {0};
 
-  // Read MEMS sensor data, skip loop iteration if read fails
-  if (!obd.memsRead(acc, gyro, mag)) return;
-  
-  // Print accelerometer data
-  Serial.print("ACC:");
-  Serial.print(acc[0]);
-  Serial.print('/');
-  Serial.print(acc[1]);
-  Serial.print('/');
-  Serial.print(acc[2]);
+    // Periodic actions every interval
+  unsigned long currentTime = millis();
+  if (currentTime - lastTime >= interval) {
+    lastTime = currentTime;
+    
+    // add frame to buffer
+    if (receiveCANFrame(canBuffer[bufferIndex])) {
+        bufferIndex++;
+        //Serial.println("" + String(bufferIndex) + "<->" + String(BUFFER_SIZE));
+        if (bufferIndex >= BUFFER_SIZE) {
+            writeToSDCard(canBuffer, BUFFER_SIZE);
+            bufferIndex = 0; // Reset buffer index
+        }
+    }
 
-  lcd.setCursor(0,1);
-  lcd.print("                ");
-  delay(100);
-  lcd.setCursor(0,1);
-  lcd.print(String(acc[0]) + "/" + String(acc[1]) + "/" + String(acc[2]));
-
-  // Print gyroscope data
-  Serial.print(" GYRO:");
-  Serial.print(gyro[0]);
-  Serial.print('/');
-  Serial.print(gyro[1]);
-  Serial.print('/');
-  Serial.print(gyro[2]);
-
-  // Print magnetometer data
-  Serial.print(" MAG:");
-  Serial.print(mag[0]);
-  Serial.print('/');
-  Serial.print(mag[1]);
-  Serial.print('/');
-  Serial.print(mag[2]);
-  Serial.println();
-
-  // Compute and print orientation data if available
-  float yaw, pitch, roll;
-  if (obd.memsOrientation(yaw, pitch, roll)) {
-    Serial.print("Orientation: ");
-    Serial.print(yaw, 2);
-    Serial.print(' ');
-    Serial.print(pitch, 2);
-    Serial.print(' ');
-    Serial.println(roll, 2);
   }
 
-  delay(100);
+    
 }
